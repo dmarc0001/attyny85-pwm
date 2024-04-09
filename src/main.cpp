@@ -173,7 +173,7 @@ void sleepNow()
   delay( 300 );
   wakedUp = true;
   attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptSwitchWakeup, CHANGE );
-  while ( !wakedUp || (digitalRead(ENCODER_SW) == LOW) )
+  while ( !wakedUp || ( digitalRead( ENCODER_SW ) == LOW ) )
   {
     delay( 5 );
   }
@@ -222,6 +222,8 @@ void interruptSwitch()
     // start debouncing
     // wait for switch release
     debounceTime = millis() + DEBOUNCE_MS;
+    if ( doSleep )
+      doSleep = false;
   }
   else
   {
@@ -239,6 +241,9 @@ void interruptSwitch()
   }
 }
 
+//
+// interrupt rouine while wakeup
+//
 void interruptSwitchWakeup()
 {
   //
