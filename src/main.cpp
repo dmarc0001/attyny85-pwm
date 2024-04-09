@@ -1,6 +1,7 @@
 #include "main.hpp"
 #include <Encoder.h>
 #include <EEPROM.h>
+#include <limits.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
 
@@ -9,6 +10,7 @@
 //
 Encoder myEnc( ENCODER_B, ENCODER_A );
 int ledVal{ START_BRIGHTNESS };
+bool doSleep{ false };
 
 //
 // arduino like setup
@@ -25,7 +27,7 @@ void setup()
   //
   // define PWM LED Port
   // 1,3 V. Rot: 1,6–2,2 V. Gelb, Grün: 1,9–2,5 V. Blau, Weiß: 2,7–3,5 V.
-
+  //
   pinMode( PWM_LED, OUTPUT );
   //
   // dimm to startvalue
@@ -36,56 +38,23 @@ void setup()
   //
   digitalWrite( ENCODER_SW, HIGH );
   //
+  // have to init the EEPROM?
+  //
+  if ( EEPROM.read( 0 ) != EEPROM_INIT_MAGIC )
+  {
+    initEEPROM();
+  }
+  //
   // EEPROM value for LED brigtness
   //
   ledVal = static_cast< int >( EEPROM.read( LED_VALUE_ADDR ) );
   // virtual position set
+  if ( ledVal < MIN_VAL_AFTER_SLEEP )
+    ledVal = MIN_VAL_AFTER_SLEEP;
   myEnc.write( ledVal );
-  // value = EEPROM.read(address);
+  // val = EEPROM.read(address);
   // EEPROM.write(addr, val);
-  // EEPROM.update( address, value ); // writes only if val is different!
-}
-
-//
-// set the device in sleep mode
-//
-void sleepNow()
-{
-  set_sleep_mode( SLEEP_MODE_PWR_DOWN );  // sleep mode is set here
-  sleep_enable();                         // enables the sleep bit in the mcucr register so sleep is possible
-  digitalWrite( PWM_LED, LOW );           // switch off analog / pwm mode
-  delayMicroseconds( 100 );               // if there is an mechanical contact in switch
-  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), wakeUpNow,
-                   LOW );  // use interrupt 0 (pin 2) and run function wakeUpNow when pin 2 gets LOW
-  sleep_mode();            // here the device is actually put to sleep!!
-  //
-  // here if wake up
-  // first thing after waking from sleep: disable sleep...
-  //
-  sleep_disable();
-  //
-  // disables interrupton pin  so the wakeUpNow code will not be executed during normal running time.
-  //
-  detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
-  //
-  // install interrupt for switch (on/off)
-  // change of state is switch on/off led
-  //
-  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptUseSwitch, CHANGE );
-}
-
-//
-// int when the device should awaken
-//
-void wakeUpNow()  // here the interrupt is handled after wakeup
-{
-  // execute code here after wake-up before returning to the loop() function
-  // timers and code using timers (serial.print and more...) will not work here.
-
-  //
-  // led like brevore switch off
-  //
-  analogWrite( PWM_LED, ledVal );
+  // EEPROM.update( addr, val ); // writes only if val is different!
 }
 
 //
@@ -93,18 +62,43 @@ void wakeUpNow()  // here the interrupt is handled after wakeup
 //
 void loop()
 {
+  // marker variables
   static int32_t oldPosition{ -999 };
   static bool wasLedValChanged{ false };
   static unsigned long nextEEPromCheck{ millis() + 3500UL };
+
+  //
+  // if the interrupt routine says, the controller have to sleep
+  //
+  if ( doSleep )
+  {
+    detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
+    analogWrite( PWM_LED, 0 );
+    delay( 220 );
+    analogWrite( PWM_LED, 255 );
+    delay( 220 );
+    analogWrite( PWM_LED, ledVal );
+    delay( 800 );
+    sleepNow();          // sleep controller
+    oldPosition = -999;  // be shure after wakeup set LED
+    doSleep = false;     // reset the value
+  }
   //
   // read the "new" virtual position of the rotary encoder
   //
   int32_t newPosition = myEnc.read();
-
+  if ( newPosition > START_DOUBLE_SPEED )
+  {
+    ++newPosition;
+    myEnc.write( newPosition );
+  }
+  //
+  // what if the position is wrong
+  //
   if ( newPosition > MAX_VAL )
   {
     //
-    // maximum behalten
+    //  kepp maximum
     //
     myEnc.write( MAX_VAL );
     newPosition = MAX_VAL;
@@ -112,7 +106,7 @@ void loop()
   if ( newPosition < 0 )
   {
     //
-    // minimum behalten
+    // keep minimum
     //
     myEnc.write( MIN_VAL );
     newPosition = MIN_VAL;
@@ -124,7 +118,7 @@ void loop()
     //
     // led makes output
     //
-      analogWrite( PWM_LED, ledVal );
+    analogWrite( PWM_LED, ledVal );
     //
     // set next time to eeprom save check
     //
@@ -133,6 +127,7 @@ void loop()
   }
   //
   // time to write eeprom?
+  // make not too often
   //
   if ( wasLedValChanged )
   {
@@ -146,97 +141,110 @@ void loop()
 }
 
 //
-// interrupt routine for switch
+// init at first time the EEPROM values
+//
+void initEEPROM()
+{
+  EEPROM.write( LED_VALUE_ADDR, START_BRIGHTNESS );
+  EEPROM.write( 0, EEPROM_INIT_MAGIC );
+}
+
+//
+// set the device in sleep mode
+// SOURCE: https://github.com/blevien/attiny85-sleep/blob/master/attiny85-sleep.ino
+//
+void sleepNow()
+{
+  EEPROM.update( LED_VALUE_ADDR, static_cast< uint8_t >( ledVal & 0xff ) );  // save the value
+  set_sleep_mode( SLEEP_MODE_PWR_DOWN );                                     // sleep mode is set here
+  sleep_enable();                // enables the sleep bit in the mcucr register so sleep is possible
+  delayMicroseconds( 100 );      // if there is an mechanical contact in switch
+  digitalWrite( PWM_LED, LOW );  // switch off analog / pwm mode
+  // use interrupt 0 (pin 2) and run function wakeUpNow when pin 2 gets LOW
+  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), wakeUpNow, LOW );
+  // here the device is actually put to sleep!!
+  sleep_mode();
+  //
+  // here if wake up
+  // first thing after waking from sleep: disable sleep...
+  //
+  sleep_disable();
+  //
+  // disables interrupton pin  so the wakeUpNow code will not be executed during normal running time.
+  //
+  detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
+  // debounce switch
+  while(!debounceSwitch( ENCODER_SW ));
+  //
+  // install interrupt for switch (on/off)
+  // change of state is switch on/off led
+  //
+  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptUseSwitch, CHANGE );
+}
+
+//
+// int when the device should awaken
+//
+void wakeUpNow()
+{
+  // here the interrupt is handled after wakeup
+  // execute code here after wake-up before returning to the loop() function
+  // timers and code using timers (serial.print and more...) will not work here.
+
+  //
+  // wakeup ALWAYS with a minimum of light
+  //
+  if ( ledVal < MIN_VAL_AFTER_SLEEP )
+    ledVal = MIN_VAL_AFTER_SLEEP;
+  myEnc.write( ledVal );
+  //
+  // led like brevore switch off
+  //
+  analogWrite( PWM_LED, ledVal );
+}
+
+//
+// interrupt routine for push-switch
 //
 void interruptUseSwitch()
 {
-  static unsigned long debounceTime{ 0UL };
-  static int ledVal_shadow;
+  if( debounceSwitch( ENCODER_SW ))
+  {
+      // say the loop the controller have to sleep
+      if ( !doSleep )
+        doSleep = true;
+  }
+}
 
-  int pin = digitalRead( ENCODER_SW );
+bool debounceSwitch( uint8_t button )
+{
+  // for debounce behavior
+  static unsigned long debounceTime{ ULONG_MAX };
+
+  //
+  // push down prepares the things
+  //
+  int pin = digitalRead( button );
   if ( pin == LOW )
   {
     // switch is down
     // start debouncing
-    // wait for up
+    // wait for switch release
     debounceTime = millis() + DEBOUNCE_MS;
-    ledVal_shadow = ledVal;
-    //analogWrite( PWM_LED, 255 );
   }
   else
   {
     //
     // switch is up
-    // check if its long enough up
+    // check if its long enough up or bonced
     //
     if ( debounceTime < millis() )
     {
-      // make something
-      if( ledVal == 0 )
-      {
-        myEnc.write( ledVal_shadow );
-      }
-      else 
-      {
-        myEnc.write( 0 );
-      }
-      debounceTime = 0UL;
+      // debounce done
+      debounceTime = ULONG_MAX;
+      // say "unbounced"
+      return(true);
     }
   }
+  return(false);
 }
-
-// void blink(uint8_t rounds)
-// {
-//   for (uint8_t i = 0; i < rounds; ++i)
-//   {
-//     analogWrite(PWM_LED, 254);
-//     delayMicroseconds(200);
-//     analogWrite(PWM_LED, 0);
-//     delayMicroseconds(300);
-//   }
-// }
-
-// Quelle: https://github.com/blevien/attiny85-sleep/blob/master/attiny85-sleep.ino
-// #include <avr/interrupt.h>
-// #include <avr/sleep.h>
-
-// int ledPinLoop = 0;        // LED connected to digital pin 0
-// int ledPinWakeUp = 4;      // LED to show the action of a interrupt
-// int wakePin = 2;           // active LOW, ground this pin momentary to wake up
-
-// void setup()
-// {
-//   pinMode(ledPinLoop, OUTPUT);     // sets the digital pin as output
-//   pinMode(ledPinWakeUp, OUTPUT);   // sets the digital pin as output
-//   pinMode(wakePin, INPUT_PULLUP);  // sets the digital pin as input
-//   digitalWrite(wakePin, HIGH);
-// }
-
-// void sleepNow()
-// {
-//   set_sleep_mode(SLEEP_MODE_PWR_DOWN);   // sleep mode is set here
-//   sleep_enable();                        // enables the sleep bit in the mcucr register so sleep is possible
-//   attachInterrupt(0, wakeUpNow, LOW);    // use interrupt 0 (pin 2) and run function wakeUpNow when pin 2 gets LOW
-//   digitalWrite(ledPinLoop, LOW);
-
-//   sleep_mode();                          // here the device is actually put to sleep!!
-
-//   sleep_disable();                       // first thing after waking from sleep: disable sleep...
-//   detachInterrupt(0);                    // disables interrupton pin 3 so the wakeUpNow code will not be executed during normal
-//   running time. delay(250);                            // wait 2 sec. so humans can notice the interrupt LED to show the interrupt
-//   is handled digitalWrite (ledPinWakeUp, LOW);      // turn off the interrupt LED
-// }
-
-// void wakeUpNow()        // here the interrupt is handled after wakeup
-// {
-//   //execute code here after wake-up before returning to the loop() function
-//   // timers and code using timers (serial.print and more...) will not work here.
-//   digitalWrite(ledPinWakeUp, HIGH);
-// }
-
-// void loop()
-// {
-//   digitalWrite(ledPinLoop, HIGH);   // sets the LED on
-//   delay(5000);                      // waits for a second
-//   sleepNow();                       // sleep function called here
-// }
