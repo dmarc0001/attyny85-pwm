@@ -10,7 +10,10 @@
 //
 Encoder myEnc( ENCODER_B, ENCODER_A );
 int ledVal{ START_BRIGHTNESS };
-bool doSleep{ false };
+// for debounce behavior
+unsigned long debounceTime{ ULONG_MAX };
+volatile bool doSleep{ false };
+volatile bool wakedUp{ true };
 
 //
 // arduino like setup
@@ -19,11 +22,6 @@ void setup()
 {
   // encoder switch for on/off
   pinMode( ENCODER_SW, INPUT_PULLUP );
-  //
-  // install interrupt for switch (on/off)
-  // change of state is switch on/off led
-  //
-  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptUseSwitch, CHANGE );
   //
   // define PWM LED Port
   // 1,3 V. Rot: 1,6–2,2 V. Gelb, Grün: 1,9–2,5 V. Blau, Weiß: 2,7–3,5 V.
@@ -52,9 +50,11 @@ void setup()
   if ( ledVal < MIN_VAL_AFTER_SLEEP )
     ledVal = MIN_VAL_AFTER_SLEEP;
   myEnc.write( ledVal );
-  // val = EEPROM.read(address);
-  // EEPROM.write(addr, val);
-  // EEPROM.update( addr, val ); // writes only if val is different!
+  //
+  // install interrupt for switch (on/off)
+  // change of state is switch on/off led
+  //
+  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptSwitch, CHANGE );
 }
 
 //
@@ -67,31 +67,30 @@ void loop()
   static bool wasLedValChanged{ false };
   static unsigned long nextEEPromCheck{ millis() + 3500UL };
 
+  if ( !wakedUp )
+    return;
   //
   // if the interrupt routine says, the controller have to sleep
   //
   if ( doSleep )
   {
     detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
-    analogWrite( PWM_LED, 0 );
-    delay( 220 );
+    EEPROM.update( LED_VALUE_ADDR, static_cast< uint8_t >( ledVal & 0xff ) );  // save the value
     analogWrite( PWM_LED, 255 );
-    delay( 220 );
-    analogWrite( PWM_LED, ledVal );
-    delay( 800 );
+    delay( 120 );
+    analogWrite( PWM_LED, 0 );
+    delay( 120 );
+    analogWrite( PWM_LED, 255 );
+    delay( 120 );
     sleepNow();          // sleep controller
     oldPosition = -999;  // be shure after wakeup set LED
     doSleep = false;     // reset the value
+    return;
   }
   //
   // read the "new" virtual position of the rotary encoder
   //
   int32_t newPosition = myEnc.read();
-  if ( newPosition > START_DOUBLE_SPEED )
-  {
-    ++newPosition;
-    myEnc.write( newPosition );
-  }
   //
   // what if the position is wrong
   //
@@ -155,11 +154,12 @@ void initEEPROM()
 //
 void sleepNow()
 {
-  EEPROM.update( LED_VALUE_ADDR, static_cast< uint8_t >( ledVal & 0xff ) );  // save the value
-  set_sleep_mode( SLEEP_MODE_PWR_DOWN );                                     // sleep mode is set here
-  sleep_enable();                // enables the sleep bit in the mcucr register so sleep is possible
-  delayMicroseconds( 100 );      // if there is an mechanical contact in switch
-  digitalWrite( PWM_LED, LOW );  // switch off analog / pwm mode
+  doSleep = false;
+  wakedUp = false;
+  digitalWrite( PWM_LED, LOW );           // switch off analog / pwm mode
+  set_sleep_mode( SLEEP_MODE_PWR_DOWN );  // sleep mode is set here
+  sleep_enable();                         // enables the sleep bit in the mcucr register so sleep is possible
+  // delayMicroseconds( 100 );      // if there is an mechanical contact in switch
   // use interrupt 0 (pin 2) and run function wakeUpNow when pin 2 gets LOW
   attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), wakeUpNow, LOW );
   // here the device is actually put to sleep!!
@@ -173,13 +173,22 @@ void sleepNow()
   // disables interrupton pin  so the wakeUpNow code will not be executed during normal running time.
   //
   detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
-  // debounce switch
-  while(!debounceSwitch( ENCODER_SW ));
+  debounceTime = ULONG_MAX;
+  // TODO: debounce switch
   //
-  // install interrupt for switch (on/off)
+  delay( 300 );
+  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptSwitchWakeup, CHANGE );
+  while ( !wakedUp )
+  {
+    delay( 5 );
+  }
+  detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
+  delay( 100 );
+  //
+  // reinstall interrupt for switch (on/off)
   // change of state is switch on/off led
   //
-  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptUseSwitch, CHANGE );
+  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptSwitch, CHANGE );
 }
 
 //
@@ -198,7 +207,7 @@ void wakeUpNow()
     ledVal = MIN_VAL_AFTER_SLEEP;
   myEnc.write( ledVal );
   //
-  // led like brevore switch off
+  // led like before switch off
   //
   analogWrite( PWM_LED, ledVal );
 }
@@ -206,25 +215,12 @@ void wakeUpNow()
 //
 // interrupt routine for push-switch
 //
-void interruptUseSwitch()
+void interruptSwitch()
 {
-  if( debounceSwitch( ENCODER_SW ))
-  {
-      // say the loop the controller have to sleep
-      if ( !doSleep )
-        doSleep = true;
-  }
-}
-
-bool debounceSwitch( uint8_t button )
-{
-  // for debounce behavior
-  static unsigned long debounceTime{ ULONG_MAX };
-
   //
   // push down prepares the things
   //
-  int pin = digitalRead( button );
+  int pin = digitalRead( ENCODER_SW );
   if ( pin == LOW )
   {
     // switch is down
@@ -235,7 +231,7 @@ bool debounceSwitch( uint8_t button )
   else
   {
     //
-    // switch is up
+    // switch is up/relesed
     // check if its long enough up or bonced
     //
     if ( debounceTime < millis() )
@@ -243,8 +239,36 @@ bool debounceSwitch( uint8_t button )
       // debounce done
       debounceTime = ULONG_MAX;
       // say "unbounced"
-      return(true);
+      doSleep = true;
     }
   }
-  return(false);
+}
+
+void interruptSwitchWakeup()
+{
+  //
+  // push up prepares the things
+  //
+  int pin = digitalRead( ENCODER_SW );
+  if ( pin == LOW )
+  {
+    // switch is down
+    // start debouncing
+    // wait for switch release
+    debounceTime = millis() + DEBOUNCE_MS;
+  }
+  else
+  {
+    //
+    // switch is up/relesed
+    // check if its long enough up or bonced
+    //
+    if ( debounceTime < millis() )
+    {
+      // debounce done
+      debounceTime = ULONG_MAX;
+      // say "unbounced"
+      wakedUp = true;
+    }
+  }
 }

@@ -15,13 +15,14 @@ constexpr int32_t START_DOUBLE_SPEED = 16;  //! over for double speed
 constexpr int START_BRIGHTNESS = 16;        //! initial brightness
 constexpr int LED_VALUE_ADDR = 1;
 constexpr int EEPROM_INIT_MAGIC = 0xaa;
-constexpr unsigned long DEBOUNCE_MS = 80UL;
+constexpr unsigned long DEBOUNCE_MS = 20UL;
 
 //
 // prototypes for functions
 //
 void initEEPROM();
-void interruptUseSwitch();
+void interruptSwitch();
+void interruptSwitchWakeup();
 void sleepNow();
 void wakeUpNow();
 bool debounceSwitch( uint8_t );
