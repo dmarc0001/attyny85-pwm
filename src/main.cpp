@@ -28,10 +28,6 @@ void setup()
   //
   pinMode( PWM_LED, OUTPUT );
   //
-  // dimm to startvalue
-  //
-  analogWrite( PWM_LED, START_BRIGHTNESS );
-  //
   // pro forma, high activate
   //
   digitalWrite( ENCODER_SW, HIGH );
@@ -67,8 +63,6 @@ void loop()
   static bool wasLedValChanged{ false };
   static unsigned long nextEEPromCheck{ millis() + 3500UL };
 
-  if ( !wakedUp )
-    return;
   //
   // if the interrupt routine says, the controller have to sleep
   //
@@ -155,30 +149,31 @@ void initEEPROM()
 void sleepNow()
 {
   doSleep = false;
-  wakedUp = false;
   digitalWrite( PWM_LED, LOW );           // switch off analog / pwm mode
   set_sleep_mode( SLEEP_MODE_PWR_DOWN );  // sleep mode is set here
   sleep_enable();                         // enables the sleep bit in the mcucr register so sleep is possible
   // delayMicroseconds( 100 );      // if there is an mechanical contact in switch
   // use interrupt 0 (pin 2) and run function wakeUpNow when pin 2 gets LOW
-  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), wakeUpNow, LOW );
+  attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), nullptr /*wakeUpNow*/, LOW );
   // here the device is actually put to sleep!!
   sleep_mode();
-  //
+  // #########################################################################
   // here if wake up
   // first thing after waking from sleep: disable sleep...
-  //
+  // #########################################################################
   sleep_disable();
   //
-  // disables interrupton pin  so the wakeUpNow code will not be executed during normal running time.
+  // disables interrupton pin so the wakeUpNow code will not be executed during normal running time.
   //
-  detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
+  // detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
   debounceTime = ULONG_MAX;
+  wakeUpNow();
   // TODO: debounce switch
   //
   delay( 300 );
+  wakedUp = true;
   attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptSwitchWakeup, CHANGE );
-  while ( !wakedUp )
+  while ( !wakedUp || (digitalRead(ENCODER_SW) == LOW) )
   {
     delay( 5 );
   }
@@ -256,6 +251,7 @@ void interruptSwitchWakeup()
     // start debouncing
     // wait for switch release
     debounceTime = millis() + DEBOUNCE_MS;
+    wakedUp = false;
   }
   else
   {
