@@ -26,7 +26,8 @@ void setup()
   // define PWM LED Port
   // 1,3 V. Rot: 1,6–2,2 V. Gelb, Grün: 1,9–2,5 V. Blau, Weiß: 2,7–3,5 V.
   //
-  pinMode( PWM_LED, OUTPUT );
+  pinMode( PWM_LED_0, OUTPUT );
+  pinMode( PWM_LED_1, OUTPUT );
   //
   // pro forma, high activate
   //
@@ -70,11 +71,14 @@ void loop()
   {
     detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
     EEPROM.update( LED_VALUE_ADDR, static_cast< uint8_t >( ledVal & 0xff ) );  // save the value
-    analogWrite( PWM_LED, 255 );
+    analogWrite( PWM_LED_1, 255 );
+    analogWrite( PWM_LED_0, 255 );
     delay( 120 );
-    analogWrite( PWM_LED, 0 );
+    analogWrite( PWM_LED_0, 0 );
+    analogWrite( PWM_LED_1, 0 );
     delay( 120 );
-    analogWrite( PWM_LED, 255 );
+    analogWrite( PWM_LED_0, 255 );
+    analogWrite( PWM_LED_1, 255 );
     delay( 120 );
     sleepNow();          // sleep controller
     oldPosition = -999;  // be shure after wakeup set LED
@@ -111,7 +115,8 @@ void loop()
     //
     // led makes output
     //
-    analogWrite( PWM_LED, ledVal );
+    analogWrite( PWM_LED_0, ledVal );
+    analogWrite( PWM_LED_1, ledVal );
     //
     // set next time to eeprom save check
     //
@@ -149,10 +154,9 @@ void initEEPROM()
 void sleepNow()
 {
   doSleep = false;
-  digitalWrite( PWM_LED, LOW );           // switch off analog / pwm mode
+  digitalWrite( PWM_LED_1, LOW );         // switch off analog / pwm mode
   set_sleep_mode( SLEEP_MODE_PWR_DOWN );  // sleep mode is set here
   sleep_enable();                         // enables the sleep bit in the mcucr register so sleep is possible
-  // delayMicroseconds( 100 );      // if there is an mechanical contact in switch
   // use interrupt 0 (pin 2) and run function wakeUpNow when pin 2 gets LOW
   attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), nullptr /*wakeUpNow*/, LOW );
   // here the device is actually put to sleep!!
@@ -165,7 +169,6 @@ void sleepNow()
   //
   // disables interrupton pin so the wakeUpNow code will not be executed during normal running time.
   //
-  // detachInterrupt( digitalPinToInterrupt( ENCODER_SW ) );
   debounceTime = ULONG_MAX;
   wakeUpNow();
   // TODO: debounce switch
@@ -204,7 +207,7 @@ void wakeUpNow()
   //
   // led like before switch off
   //
-  analogWrite( PWM_LED, ledVal );
+  analogWrite( PWM_LED_1, ledVal );
 }
 
 //
