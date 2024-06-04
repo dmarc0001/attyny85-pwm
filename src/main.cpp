@@ -8,7 +8,7 @@
 //
 // global
 //
-Encoder myEnc( ENCODER_B, ENCODER_A );
+Encoder myEnc( ENCODER_A, ENCODER_B );
 int ledVal{ START_BRIGHTNESS };
 // for debounce behavior
 unsigned long debounceTime{ ULONG_MAX };
@@ -27,7 +27,7 @@ void setup()
   // 1,3 V. Rot: 1,6–2,2 V. Gelb, Grün: 1,9–2,5 V. Blau, Weiß: 2,7–3,5 V.
   //
   pinMode( PWM_LED_0, OUTPUT );
-  pinMode( PWM_LED_1, OUTPUT );
+  pinMode( PWM_LED_1, INPUT );
   //
   // pro forma, high activate
   //
@@ -52,6 +52,10 @@ void setup()
   // change of state is switch on/off led
   //
   attachInterrupt( digitalPinToInterrupt( ENCODER_SW ), interruptSwitch, CHANGE );
+
+  // DEBUG: test
+  // analogWrite( PWM_LED_0, 128 );
+  // analogWrite( PWM_LED_1, 128 );
 }
 
 //
@@ -59,8 +63,9 @@ void setup()
 //
 void loop()
 {
+  // return;
   // marker variables
-  static int32_t oldPosition{ -999 };
+  static int32_t oldPosition{ 1 };
   static bool wasLedValChanged{ false };
   static unsigned long nextEEPromCheck{ millis() + 3500UL };
 
@@ -80,9 +85,9 @@ void loop()
     analogWrite( PWM_LED_0, 255 );
     analogWrite( PWM_LED_1, 255 );
     delay( 120 );
-    sleepNow();          // sleep controller
-    oldPosition = -999;  // be shure after wakeup set LED
-    doSleep = false;     // reset the value
+    sleepNow();       // sleep controller
+    oldPosition = 1;  // be shure after wakeup set LED
+    doSleep = false;  // reset the value
     return;
   }
   //
@@ -111,15 +116,35 @@ void loop()
   if ( newPosition != oldPosition )
   {
     ledVal = static_cast< int >( newPosition & 0xff );
-    oldPosition = newPosition;
     //
     // led makes output
     //
-    analogWrite( PWM_LED_0, ledVal );
-    analogWrite( PWM_LED_1, ledVal );
+    if ( ledVal < POWER_SAVE_VAL )
+    {
+      // was bevore more than "turbo"
+      if ( oldPosition >= POWER_SAVE_VAL )
+      {
+        // "turbo" off
+        pinMode( PWM_LED_1, INPUT );
+        // analogWrite( PWM_LED_1, 0 );
+      }
+      analogWrite( PWM_LED_0, ledVal );
+    }
+    else
+    {
+      if ( oldPosition < POWER_SAVE_VAL )
+      {
+        // was bevore lower than "turbo"
+        // switch orbo on
+        pinMode( PWM_LED_1, OUTPUT );
+      }
+      analogWrite( PWM_LED_0, ledVal );
+      analogWrite( PWM_LED_1, ledVal );
+    }
     //
     // set next time to eeprom save check
     //
+    oldPosition = newPosition;
     wasLedValChanged = true;
     nextEEPromCheck = millis() + 3500UL;
   }
@@ -154,6 +179,7 @@ void initEEPROM()
 void sleepNow()
 {
   doSleep = false;
+  digitalWrite( PWM_LED_0, LOW );         // switch off analog / pwm mode
   digitalWrite( PWM_LED_1, LOW );         // switch off analog / pwm mode
   set_sleep_mode( SLEEP_MODE_PWR_DOWN );  // sleep mode is set here
   sleep_enable();                         // enables the sleep bit in the mcucr register so sleep is possible
@@ -207,7 +233,18 @@ void wakeUpNow()
   //
   // led like before switch off
   //
-  analogWrite( PWM_LED_1, ledVal );
+  if ( ledVal < POWER_SAVE_VAL )
+  {
+    // "turbo" off
+    pinMode( PWM_LED_1, INPUT );
+    //  analogWrite( PWM_LED_1, 0 );
+  }
+  else
+  {
+    pinMode( PWM_LED_1, OUTPUT );
+    analogWrite( PWM_LED_1, ledVal );
+  }
+  analogWrite( PWM_LED_0, ledVal );
 }
 
 //
